@@ -1,6 +1,6 @@
 const puppeteer = require('puppeteer');
 
-const FAUCET_URL = 'https://sepolia-faucet.pk910.de/';
+const FAUCET_URL = process.env.URL || 'https://sepolia-faucet.pk910.de/';
 const PROXY = process.env.PROXY || '';
 const DURATION_MINUTES = parseInt(process.env.DURATION || '60');
 
@@ -18,17 +18,31 @@ async function main() {
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
+            '--ignore-certificate-errors',
         ],
     };
 
+    let proxyUser = '';
+    let proxyPass = '';
+
     if (PROXY) {
-        let proxyUrl = PROXY;
-        try {
-            const url = new URL(PROXY);
-            proxyUrl = `${url.protocol}//${url.hostname}:${url.port}`;
-        } catch (e) {}
-        launchOptions.args.push(`--proxy-server=${proxyUrl}`);
-        console.log(`[*] Proxy: ${proxyUrl}`);
+        // Parse proxy: http://user:pass@host:port
+        const match = PROXY.match(/^(https?|socks5):\/\/(?:([^:]+):([^@]+)@)?(.+)$/);
+        if (match) {
+            const protocol = match[1];
+            proxyUser = match[2] || '';
+            proxyPass = match[3] || '';
+            const hostPort = match[4]; // host:port
+            const proxyServer = `${protocol}://${hostPort}`;
+            launchOptions.args.push(`--proxy-server=${proxyServer}`);
+            console.log(`[*] Proxy server: ${proxyServer}`);
+            if (proxyUser) {
+                console.log(`[*] Proxy auth: ${proxyUser}:****`);
+            }
+        } else {
+            launchOptions.args.push(`--proxy-server=${PROXY}`);
+            console.log(`[*] Proxy: ${PROXY}`);
+        }
     }
 
     console.log('[*] Membuka browser...');
@@ -36,16 +50,12 @@ async function main() {
     const page = await browser.newPage();
 
     // Auth proxy jika ada user:pass
-    if (PROXY) {
-        try {
-            const url = new URL(PROXY);
-            if (url.username && url.password) {
-                await page.authenticate({
-                    username: decodeURIComponent(url.username),
-                    password: decodeURIComponent(url.password),
-                });
-            }
-        } catch (e) {}
+    if (proxyUser && proxyPass) {
+        await page.authenticate({
+            username: proxyUser,
+            password: proxyPass,
+        });
+        console.log('[*] Proxy auth aktif');
     }
 
     await page.setUserAgent(
@@ -54,7 +64,7 @@ async function main() {
 
     console.log(`[*] Membuka ${FAUCET_URL}...`);
     try {
-        await page.goto(FAUCET_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+        await page.goto(FAUCET_URL, { waitUntil: 'networkidle2', timeout: 120000 });
         console.log('[+] Halaman berhasil dibuka!');
     } catch (err) {
         console.error(`[!] Gagal: ${err.message}`);
